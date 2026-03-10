@@ -1,6 +1,5 @@
 from __future__ import annotations
-import os
-import re
+
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -12,19 +11,106 @@ import streamlit as st
 # =========================================================
 # PAGE
 # =========================================================
-st.set_page_config(page_title="Somalia ACLED Fatalities", layout="wide")
-st.title("Somalia ACLED Fatalities")
-st.caption("Bubble map by location with year, month, date, and sub-event type filters")
+st.set_page_config(
+    page_title="Somalia ACLED Fatalities",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown("""
+<style>
+    .stApp {
+        background: linear-gradient(180deg, #f7f9fc 0%, #eef3f8 100%);
+        color: #1f2937;
+        font-family: "Segoe UI", sans-serif;
+    }
+
+    .block-container {
+        padding-top: 1.4rem;
+        padding-bottom: 2rem;
+        padding-left: 2rem;
+        padding-right: 2rem;
+        max-width: 1450px;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: #ffffff;
+        border-right: 1px solid #e5e7eb;
+    }
+
+    section[data-testid="stSidebar"] .block-container {
+        padding-top: 1rem;
+    }
+
+    h1, h2, h3 {
+        color: #111827;
+    }
+
+    div[data-testid="metric-container"] {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        padding: 16px 18px;
+        border-radius: 16px;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+    }
+
+    div[data-testid="metric-container"] label {
+        color: #6b7280 !important;
+        font-size: 0.9rem !important;
+        font-weight: 600 !important;
+    }
+
+    div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
+        color: #111827 !important;
+        font-weight: 800 !important;
+    }
+
+    div[data-testid="stPlotlyChart"] {
+        background: #ffffff;
+        border-radius: 18px;
+        padding: 10px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+    }
+
+    div[data-testid="stDataFrame"] {
+        background: #ffffff;
+        border-radius: 16px;
+        padding: 8px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+    }
+
+    div[data-testid="stAlert"] {
+        border-radius: 14px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div style="
+    background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+    padding: 22px 26px;
+    border-radius: 20px;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.05);
+    margin-bottom: 18px;
+">
+    <div style="font-size: 2.2rem; font-weight: 800; color: #a61b1b; margin-bottom: 4px;">
+        Somalia ACLED Fatalities
+    </div>
+    <div style="font-size: 1rem; color: #4b5563;">
+        Interactive bubble map by location with year, month, date, and sub-event type filters
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 
 # =========================================================
 # CONFIG
 # =========================================================
+ACLED_TOKEN = "PASTE_YOUR_ACLED_TOKEN_HERE"
 
-ACLED_TOKEN = os.getenv("ACLED_TOKEN")
-if not ACLED_TOKEN:
-    st.error("ACLED token not found. Please set the ACLED_TOKEN environment variable.")
-    st.stop()
 ACLED_BASE_URL = "https://acleddata.com/api/acled/read"
 COUNTRY = "Somalia"
 PAGE_LIMIT = 5000
@@ -59,8 +145,9 @@ def make_empty_map(title: str):
     fig.update_layout(
         title=title,
         mapbox_style="carto-positron",
-        margin=dict(l=0, r=0, t=40, b=0),
-        paper_bgcolor="#f7f7f7",
+        margin=dict(l=0, r=0, t=55, b=0),
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
     )
     return fig
 
@@ -92,6 +179,10 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
         }
 
         r = requests.get(ACLED_BASE_URL, headers=headers, params=params, timeout=90)
+
+        if r.status_code == 401:
+            raise Exception("ACLED token expired or unauthorized. Generate a new token and replace ACLED_TOKEN.")
+
         r.raise_for_status()
 
         payload = r.json()
@@ -141,9 +232,8 @@ def build_bubble_map(df: pd.DataFrame, title: str):
     if map_df.empty:
         return make_empty_map(title)
 
-    # avoid zero-size bubbles disappearing completely
     map_df["bubble_size"] = map_df["fatalities"].clip(lower=0).apply(
-        lambda x: 8 if x == 0 else min(40, 8 + (x ** 0.5) * 2.2)
+        lambda x: 8 if x == 0 else min(42, 8 + (x ** 0.5) * 2.2)
     )
 
     fig = px.scatter_mapbox(
@@ -152,7 +242,7 @@ def build_bubble_map(df: pd.DataFrame, title: str):
         lon="longitude",
         color="event_type",
         size="bubble_size",
-        size_max=40,
+        size_max=42,
         zoom=5.2,
         center={"lat": 5.8, "lon": 46.2},
         hover_name="location",
@@ -167,15 +257,33 @@ def build_bubble_map(df: pd.DataFrame, title: str):
             "longitude": False,
             "bubble_size": False,
         },
-        opacity=0.70,
+        opacity=0.72,
         title=title,
     )
 
     fig.update_layout(
         mapbox_style="carto-positron",
-        margin=dict(l=0, r=0, t=40, b=0),
-        paper_bgcolor="#f7f7f7",
-        legend_title_text="Event type",
+        margin=dict(l=0, r=0, t=55, b=0),
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        legend=dict(
+            title="Event type",
+            orientation="v",
+            yanchor="top",
+            y=0.98,
+            xanchor="left",
+            x=0.01,
+            bgcolor="rgba(255,255,255,0.88)",
+            bordercolor="rgba(0,0,0,0.08)",
+            borderwidth=1,
+            font=dict(size=12),
+        ),
+        title=dict(
+            text=title,
+            x=0.01,
+            xanchor="left",
+            font=dict(size=22, color="#111827"),
+        ),
     )
 
     fig.update_traces(
@@ -205,7 +313,11 @@ try:
 
     available_years = sorted(raw_df["year"].dropna().astype(int).unique().tolist())
 
-    st.sidebar.header("Filters")
+    st.sidebar.markdown("""
+    <div style="font-size:1.2rem; font-weight:800; color:#a61b1b; margin-bottom:8px;">
+        Filters
+    </div>
+    """, unsafe_allow_html=True)
 
     selected_year = st.sidebar.selectbox(
         "Year",
@@ -247,6 +359,13 @@ try:
         default=subevent_options,
     )
 
+    event_options = sorted(year_df["event_type"].dropna().astype(str).unique().tolist())
+    selected_events = st.sidebar.multiselect(
+        "Event type",
+        options=event_options,
+        default=event_options,
+    )
+
     filtered = year_df.copy()
 
     if selected_month != "All":
@@ -259,6 +378,11 @@ try:
 
     if selected_subevents:
         filtered = filtered[filtered["sub_event_type"].isin(selected_subevents)].copy()
+    else:
+        filtered = filtered.iloc[0:0].copy()
+
+    if selected_events:
+        filtered = filtered[filtered["event_type"].isin(selected_events)].copy()
     else:
         filtered = filtered.iloc[0:0].copy()
 
