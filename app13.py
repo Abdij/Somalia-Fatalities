@@ -179,7 +179,7 @@ while True:
     "_format": "json",
 }
 
-r = requests.get(ACLED_BASE_URL, headers=headers, params=params, timeout=90)
+    r = requests.get(ACLED_BASE_URL, headers=headers, params=params, timeout=90)
 
         if r.status_code == 401:
             raise ValueError("ACLED token expired or unauthorized. Update Streamlit secrets with a new token.")
