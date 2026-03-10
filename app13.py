@@ -190,7 +190,7 @@ def create_sample_data() -> pd.DataFrame:
         "Strategic developments": ["Agreement", "Headquarters or base established", "Looting/property destruction"]
     }
     
-    # Generate data for 2023
+    # Generate dates as pandas datetime objects
     dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="D")
     
     rows = []
@@ -224,9 +224,6 @@ def create_sample_data() -> pd.DataFrame:
                 
                 rows.append({
                     "event_date": date,
-                    "year": date.year,
-                    "month": date.month,
-                    "month_name": date.strftime("%B"),
                     "country": "Somalia",
                     "admin1": region,
                     "admin2": location,
@@ -236,10 +233,20 @@ def create_sample_data() -> pd.DataFrame:
                     "event_type": event_type,
                     "sub_event_type": sub_event_type,
                     "fatalities": fatalities,
-                    "has_coords": True,
                 })
     
+    # Create DataFrame
     df = pd.DataFrame(rows)
+    
+    # Convert event_date to datetime if it isn't already
+    df["event_date"] = pd.to_datetime(df["event_date"])
+    
+    # Add derived columns using pandas datetime methods
+    df["year"] = df["event_date"].dt.year
+    df["month"] = df["event_date"].dt.month
+    df["month_name"] = df["event_date"].dt.strftime("%B")
+    df["has_coords"] = df["latitude"].notna() & df["longitude"].notna()
+    
     return df
 
 
@@ -406,7 +413,7 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
     # Filter out rows with no date
     df = df[df["event_date"].notna()].copy()
     
-    # Add derived columns
+    # Add derived columns using pandas datetime methods
     df["year"] = df["event_date"].dt.year
     df["month"] = df["event_date"].dt.month
     df["month_name"] = df["event_date"].dt.strftime("%B")
