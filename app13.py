@@ -112,7 +112,8 @@ st.markdown("""
 ACLED_TOKEN = st.secrets.get("ACLED_TOKEN", "")
 
 ACLED_BASE_URL = "https://acleddata.com/api/acled/read"
-COUNTRY = 706
+
+COUNTRY = 706   # Somalia ISO code
 PAGE_LIMIT = 5000
 
 ACLED_FIELDS = [
@@ -170,13 +171,13 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
     page = 1
 
     while True:
-        params = {
-            "country": COUNTRY,
-            "limit": PAGE_LIMIT,
-            "page": page,
-            "fields": "|".join(ACLED_FIELDS),
-            "_format": "json",
-        }
+      params = {
+    "iso": COUNTRY,
+    "limit": PAGE_LIMIT,
+    "page": page,
+    "fields": "|".join(ACLED_FIELDS),
+    "_format": "json",
+}
 
         r = requests.get(ACLED_BASE_URL, headers=headers, params=params, timeout=90)
 
