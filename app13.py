@@ -105,7 +105,7 @@ ACLED_BASE_URL = "https://acleddata.com/api/acled/read"
 COUNTRY_NAME = "Somalia"
 COUNTRY_ISO = 706
 PAGE_LIMIT = 5000
-MAX_PAGES = 20
+MAX_PAGES = 10
 
 ACLED_FIELDS = [
     "event_id_cnty",
@@ -142,6 +142,32 @@ def make_empty_map(title: str):
         plot_bgcolor="#ffffff",
     )
     return fig
+
+
+def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    df = df.copy()
+    df["event_date"] = pd.to_datetime(df.get("event_date"), errors="coerce")
+    df["fatalities"] = pd.to_numeric(df.get("fatalities"), errors="coerce").fillna(0)
+    df["latitude"] = pd.to_numeric(df.get("latitude"), errors="coerce")
+    df["longitude"] = pd.to_numeric(df.get("longitude"), errors="coerce")
+
+    df["country"] = safe_str_series(df, "country")
+    df["admin1"] = safe_str_series(df, "admin1")
+    df["admin2"] = safe_str_series(df, "admin2")
+    df["location"] = safe_str_series(df, "location")
+    df["event_type"] = safe_str_series(df, "event_type")
+    df["sub_event_type"] = safe_str_series(df, "sub_event_type")
+
+    df = df[df["event_date"].notna()].copy()
+    df["year"] = df["event_date"].dt.year
+    df["month"] = df["event_date"].dt.month
+    df["month_name"] = df["event_date"].dt.strftime("%B")
+    df["has_coords"] = df["latitude"].notna() & df["longitude"].notna()
+
+    return df
 
 
 # =========================================================
@@ -187,7 +213,9 @@ def fetch_one_page(
             "count": payload.get("count"),
             "total_count": payload.get("total_count"),
             "messages": payload.get("messages"),
-            "url_filter": filter_params,
+            "data_query_restrictions": payload.get("data_query_restrictions"),
+            "filter": filter_params,
+            "page": page,
         }
     elif isinstance(payload, list):
         batch = payload
@@ -197,7 +225,9 @@ def fetch_one_page(
             "count": len(batch),
             "total_count": len(batch),
             "messages": [],
-            "url_filter": filter_params,
+            "data_query_restrictions": None,
+            "filter": filter_params,
+            "page": page,
         }
     else:
         batch = []
@@ -207,7 +237,9 @@ def fetch_one_page(
             "count": 0,
             "total_count": 0,
             "messages": [],
-            "url_filter": filter_params,
+            "data_query_restrictions": None,
+            "filter": filter_params,
+            "page": page,
         }
 
     return batch, meta
@@ -218,7 +250,7 @@ def fetch_acled_all_somalia(token: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     if not token:
         raise ValueError("Missing ACLED token in Streamlit secrets.")
 
-    debug: Dict[str, Any] = {"attempts": []}
+    debug: Dict[str, Any] = {"attempts": [], "diagnostic_sample_countries": []}
 
     def fetch_with_filter(filter_params: Dict[str, Any]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
@@ -226,14 +258,7 @@ def fetch_acled_all_somalia(token: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
 
         while page <= MAX_PAGES:
             batch, meta = fetch_one_page(token, filter_params, page)
-
-            debug["attempts"].append({
-                "page": page,
-                "filter": filter_params,
-                "count": meta.get("count"),
-                "total_count": meta.get("total_count"),
-                "messages": meta.get("messages"),
-            })
+            debug["attempts"].append(meta)
 
             if not batch:
                 break
@@ -248,33 +273,26 @@ def fetch_acled_all_somalia(token: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         return rows
 
     rows = fetch_with_filter({"country": COUNTRY_NAME})
+
     if not rows:
         rows = fetch_with_filter({"iso": COUNTRY_ISO})
 
     if not rows:
+        # Diagnostic: fetch unfiltered sample and inspect countries returned
+        sample_batch, sample_meta = fetch_one_page(token, {}, 1)
+        debug["diagnostic_sample_meta"] = sample_meta
+
+        if sample_batch:
+            sample_df = pd.DataFrame(sample_batch)
+            if "country" in sample_df.columns:
+                debug["diagnostic_sample_countries"] = (
+                    sample_df["country"].dropna().astype(str).unique().tolist()[:50]
+                )
+
         empty = pd.DataFrame(columns=ACLED_FIELDS)
         return empty, debug
 
-    df = pd.DataFrame(rows)
-
-    df["event_date"] = pd.to_datetime(df.get("event_date"), errors="coerce")
-    df["fatalities"] = pd.to_numeric(df.get("fatalities"), errors="coerce").fillna(0)
-    df["latitude"] = pd.to_numeric(df.get("latitude"), errors="coerce")
-    df["longitude"] = pd.to_numeric(df.get("longitude"), errors="coerce")
-
-    df["admin1"] = safe_str_series(df, "admin1")
-    df["admin2"] = safe_str_series(df, "admin2")
-    df["location"] = safe_str_series(df, "location")
-    df["event_type"] = safe_str_series(df, "event_type")
-    df["sub_event_type"] = safe_str_series(df, "sub_event_type")
-    df["country"] = safe_str_series(df, "country")
-
-    df = df[df["event_date"].notna()].copy()
-    df["year"] = df["event_date"].dt.year
-    df["month"] = df["event_date"].dt.month
-    df["month_name"] = df["event_date"].dt.strftime("%B")
-    df["has_coords"] = df["latitude"].notna() & df["longitude"].notna()
-
+    df = normalize_df(pd.DataFrame(rows))
     return df, debug
 
 
@@ -367,10 +385,14 @@ try:
     if raw_df.empty:
         st.error("ACLED request succeeded, but returned no Somalia rows.")
         with st.expander("Debug details"):
-            st.write("Attempts:")
-            st.json(debug_info)
             st.write("Token present:", bool(ACLED_TOKEN))
             st.write("Endpoint:", ACLED_BASE_URL)
+            st.write("Attempts:")
+            st.json(debug_info.get("attempts", []))
+            st.write("Diagnostic sample countries:")
+            st.write(debug_info.get("diagnostic_sample_countries", []))
+            st.write("Diagnostic sample metadata:")
+            st.json(debug_info.get("diagnostic_sample_meta", {}))
         st.stop()
 
     available_years = sorted(raw_df["year"].dropna().astype(int).unique().tolist())
