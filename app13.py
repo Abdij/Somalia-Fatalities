@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
-ACLED_TOKEN = st.secrets["ACLED_TOKEN"]
+
 
 # =========================================================
 # PAGE
@@ -100,7 +100,7 @@ st.markdown("""
         Somalia ACLED Fatalities
     </div>
     <div style="font-size: 1rem; color: #4b5563;">
-        Interactive bubble map by location with year, month, date, and sub-event type filters
+        Interactive bubble map by location with year, month, date, event type, and sub-event type filters
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -109,7 +109,7 @@ st.markdown("""
 # =========================================================
 # CONFIG
 # =========================================================
-#ACLED_TOKEN = "PASTE_YOUR_ACLED_TOKEN_HERE"
+ACLED_TOKEN = st.secrets.get("ACLED_TOKEN", "")
 
 ACLED_BASE_URL = "https://acleddata.com/api/acled/read"
 COUNTRY = "Somalia"
@@ -155,10 +155,10 @@ def make_empty_map(title: str):
 # =========================================================
 # ACLED DOWNLOAD
 # =========================================================
-@st.cache_data(show_spinner=True)
+@st.cache_data(show_spinner=True, ttl=3600)
 def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
     if not token:
-        raise ValueError("Missing ACLED token.")
+        raise ValueError("Missing ACLED token in Streamlit secrets.")
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -181,7 +181,7 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
         r = requests.get(ACLED_BASE_URL, headers=headers, params=params, timeout=90)
 
         if r.status_code == 401:
-            raise Exception("ACLED token expired or unauthorized. Generate a new token and replace ACLED_TOKEN.")
+            raise ValueError("ACLED token expired or unauthorized. Update Streamlit secrets with a new token.")
 
         r.raise_for_status()
 
@@ -199,7 +199,7 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
         page += 1
 
     if not rows:
-        return pd.DataFrame(columns=ACLED_FIELDS)
+        raise ValueError("ACLED request succeeded, but returned no Somalia rows.")
 
     df = pd.DataFrame(rows)
 
@@ -308,7 +308,7 @@ try:
     raw_df = fetch_acled_all_somalia(ACLED_TOKEN)
 
     if raw_df.empty:
-        st.warning("No ACLED Somalia data was returned.")
+        st.error("ACLED returned no Somalia data. Check whether the deployed token is missing, expired, or outdated.")
         st.stop()
 
     available_years = sorted(raw_df["year"].dropna().astype(int).unique().tolist())
