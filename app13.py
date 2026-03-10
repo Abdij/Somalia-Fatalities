@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
-
+ACLED_TOKEN = st.secrets["ACLED_TOKEN"]
 
 # =========================================================
 # PAGE
