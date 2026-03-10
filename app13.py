@@ -109,7 +109,7 @@ st.markdown("""
 # =========================================================
 # CONFIG
 # =========================================================
-ACLED_TOKEN = "PASTE_YOUR_ACLED_TOKEN_HERE"
+#ACLED_TOKEN = "PASTE_YOUR_ACLED_TOKEN_HERE"
 
 ACLED_BASE_URL = "https://acleddata.com/api/acled/read"
 COUNTRY = "Somalia"
