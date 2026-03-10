@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-from datetime import datetime
-import time
+from typing import Any, Dict, List
 
 import pandas as pd
 import plotly.express as px
 import requests
 import streamlit as st
-import numpy as np
 
 
 # =========================================================
@@ -114,15 +111,10 @@ st.markdown("""
 # =========================================================
 ACLED_TOKEN = st.secrets.get("ACLED_TOKEN", "")
 
-# Multiple possible API endpoints (in order of likelihood)
-ACLED_API_ENDPOINTS = [
-    "https://api.acleddata.com/acled/read",
-    "https://acleddata.com/api/acled/read",
-    "https://data.acleddata.com/acled/read",
-]
-
+ACLED_BASE_URL = "https://acleddata.com/api/acled/read"
 COUNTRY = "Somalia"
-PAGE_LIMIT = 10000
+PAGE_LIMIT = 5000
+MAX_PAGES = 20
 
 ACLED_FIELDS = [
     "event_id_cnty",
@@ -161,147 +153,13 @@ def make_empty_map(title: str):
     return fig
 
 
-def create_sample_data() -> pd.DataFrame:
-    """Create enhanced sample Somalia data for demonstration"""
-    st.info("📊 Using enhanced sample data for demonstration. Add a valid ACLED token to see real data.")
-    
-    # Create more realistic sample data for Somalia
-    np.random.seed(42)  # for reproducibility
-    
-    # Define regions and their coordinates
-    regions = {
-        "Banaadir": {"locations": ["Mogadishu", "Hamar", "Waberi"], 
-                    "lat_range": (2.0, 2.1), "lon_range": (45.3, 45.4)},
-        "Lower Shabelle": {"locations": ["Afgooye", "Merca", "Qoryooley", "Barawa"],
-                          "lat_range": (1.5, 2.2), "lon_range": (44.5, 45.2)},
-        "Gedo": {"locations": ["Garbahaarey", "Bardera", "Luuq", "Dolow"],
-                "lat_range": (2.5, 4.0), "lon_range": (41.5, 42.8)},
-        "Bay": {"locations": ["Baidoa", "Burhakaba", "Dinsoor"],
-               "lat_range": (2.5, 3.5), "lon_range": (42.5, 44.0)},
-        "Mudug": {"locations": ["Galkayo", "Hobyo", "Harardhere"],
-                 "lat_range": (5.0, 7.5), "lon_range": (47.0, 49.0)},
-    }
-    
-    event_types = {
-        "Battles": ["Armed clash", "Government regain territory", "Non-state actor overtakes territory"],
-        "Violence against civilians": ["Attack", "Abduction/forced disappearance", "Sexual violence"],
-        "Explosions/Remote violence": ["Suicide bomb", "Remote explosive/landmine", "Shelling/artillery"],
-        "Protests": ["Peaceful protest", "Protest with intervention", "Excessive force against protesters"],
-        "Strategic developments": ["Agreement", "Headquarters or base established", "Looting/property destruction"]
-    }
-    
-    # Generate dates as pandas datetime objects
-    dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="D")
-    
-    rows = []
-    
-    for region, info in regions.items():
-        for location in info["locations"]:
-            # Generate multiple events per location
-            n_events = np.random.randint(5, 20)
-            
-            for _ in range(n_events):
-                # Random date
-                date = np.random.choice(dates)
-                
-                # Random event type and sub-event type
-                event_type = np.random.choice(list(event_types.keys()))
-                sub_event_type = np.random.choice(event_types[event_type])
-                
-                # Random coordinates within region range
-                lat = np.random.uniform(info["lat_range"][0], info["lat_range"][1])
-                lon = np.random.uniform(info["lon_range"][0], info["lon_range"][1])
-                
-                # Fatalities based on event type
-                if event_type == "Battles":
-                    fatalities = np.random.poisson(5)
-                elif event_type == "Violence against civilians":
-                    fatalities = np.random.poisson(3)
-                elif event_type == "Explosions/Remote violence":
-                    fatalities = np.random.poisson(4)
-                else:
-                    fatalities = np.random.poisson(1)
-                
-                rows.append({
-                    "event_date": date,
-                    "country": "Somalia",
-                    "admin1": region,
-                    "admin2": location,
-                    "location": location,
-                    "latitude": lat,
-                    "longitude": lon,
-                    "event_type": event_type,
-                    "sub_event_type": sub_event_type,
-                    "fatalities": fatalities,
-                })
-    
-    # Create DataFrame
-    df = pd.DataFrame(rows)
-    
-    # Convert event_date to datetime if it isn't already
-    df["event_date"] = pd.to_datetime(df["event_date"])
-    
-    # Add derived columns using pandas datetime methods
-    df["year"] = df["event_date"].dt.year
-    df["month"] = df["event_date"].dt.month
-    df["month_name"] = df["event_date"].dt.strftime("%B")
-    df["has_coords"] = df["latitude"].notna() & df["longitude"].notna()
-    
-    return df
-
-
 # =========================================================
-# ACLED DOWNLOAD WITH MULTIPLE ENDPOINTS
+# ACLED DOWNLOAD
 # =========================================================
-def test_api_endpoint(endpoint: str, token: str, params: Dict) -> tuple[bool, Optional[Dict]]:
-    """Test if an API endpoint is accessible"""
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "User-Agent": "somalia-acled-bubble-map",
-    }
-    
-    try:
-        r = requests.get(endpoint, headers=headers, params=params, timeout=10)
-        if r.status_code == 200:
-            return True, r.json()
-        else:
-            return False, None
-    except:
-        return False, None
-
-
 @st.cache_data(show_spinner=True, ttl=3600)
 def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
     if not token:
-        st.warning("🔑 No ACLED token found. Using sample data.")
-        return create_sample_data()
-
-    # Test parameters
-    test_params = {
-        "country": COUNTRY,
-        "limit": 1,
-        "fields": ",".join(ACLED_FIELDS[:3]),  # Just a few fields for testing
-        "format": "json",
-    }
-    
-    # Find working endpoint
-    working_endpoint = None
-    st.info("🔍 Testing ACLED API endpoints...")
-    
-    for endpoint in ACLED_API_ENDPOINTS:
-        st.write(f"Testing: {endpoint}")
-        success, _ = test_api_endpoint(endpoint, token, test_params)
-        if success:
-            working_endpoint = endpoint
-            st.success(f"✅ Found working endpoint: {endpoint}")
-            break
-        else:
-            st.write(f"❌ Failed: {endpoint}")
-    
-    if not working_endpoint:
-        st.error("❌ Could not connect to any ACLED API endpoint. Using sample data.")
-        return create_sample_data()
+        raise ValueError("Missing ACLED token in Streamlit secrets.")
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -311,109 +169,63 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
 
     rows: List[Dict[str, Any]] = []
     page = 1
-    max_pages = 5  # Limit pages to avoid long loading times
-    retries = 3
 
-    # Show progress
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    while page <= MAX_PAGES:
+        params = {
+            "country": COUNTRY,
+            "limit": PAGE_LIMIT,
+            "page": page,
+            "fields": "|".join(ACLED_FIELDS),
+            "_format": "json",
+        }
 
-    try:
-        while page <= max_pages:
-            for attempt in range(retries):
-                try:
-                    status_text.text(f"Fetching page {page} (attempt {attempt + 1}/{retries})...")
-                    
-                    params = {
-                        "country": COUNTRY,
-                        "limit": PAGE_LIMIT,
-                        "page": page,
-                        "fields": ",".join(ACLED_FIELDS),
-                        "format": "json",
-                    }
+        r = requests.get(
+            ACLED_BASE_URL,
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
 
-                    with st.expander(f"Debug - Page {page} Request", expanded=False):
-                        st.write(f"Endpoint: {working_endpoint}")
-                        st.write(f"Params: {params}")
+        if r.status_code == 401:
+            raise ValueError("ACLED token expired or unauthorized. Update Streamlit secrets with a new token.")
 
-                    r = requests.get(
-                        working_endpoint, 
-                        headers=headers, 
-                        params=params, 
-                        timeout=30
-                    )
+        r.raise_for_status()
+        payload = r.json()
 
-                    if r.status_code == 401:
-                        st.error("🔑 ACLED token is invalid or expired.")
-                        return create_sample_data()
+        if isinstance(payload, dict):
+            batch = payload.get("data", [])
+        elif isinstance(payload, list):
+            batch = payload
+        else:
+            batch = []
 
-                    r.raise_for_status()
-                    payload = r.json()
-                    
-                    # Handle different response formats
-                    if isinstance(payload, dict):
-                        batch = payload.get("data", [])
-                        if not batch:
-                            batch = payload.get("results", [])
-                    else:
-                        batch = payload if isinstance(payload, list) else []
+        if not batch:
+            break
 
-                    if not batch:
-                        status_text.text(f"No more data on page {page}")
-                        break
+        rows.extend(batch)
 
-                    rows.extend(batch)
-                    
-                    # Update progress
-                    progress_bar.progress(min(page * 20, 100))
-                    
-                    # If we got fewer items than the limit, we're done
-                    if len(batch) < PAGE_LIMIT:
-                        status_text.text(f"Completed - fetched {len(rows)} total events")
-                        break
-                        
-                    break  # Success, exit retry loop
-                    
-                except requests.exceptions.RequestException as e:
-                    if attempt == retries - 1:
-                        st.warning(f"Failed to fetch page {page} after {retries} attempts")
-                        st.write(f"Error: {str(e)}")
-                    else:
-                        time.sleep(2 ** attempt)  # Exponential backoff
-                        continue
+        if len(batch) < PAGE_LIMIT:
+            break
 
-            page += 1
-
-    except Exception as e:
-        st.error(f"Unexpected error: {e}")
-        return create_sample_data()
-    finally:
-        progress_bar.empty()
-        status_text.empty()
+        page += 1
 
     if not rows:
-        st.warning("No Somalia data found from API. Using sample data.")
-        return create_sample_data()
+        raise ValueError("ACLED request succeeded, but returned no Somalia rows.")
 
-    st.success(f"✅ Successfully fetched {len(rows)} events from ACLED")
-    
-    # Convert to DataFrame
     df = pd.DataFrame(rows)
 
-    # Process dates and numbers
     df["event_date"] = pd.to_datetime(df.get("event_date"), errors="coerce")
     df["fatalities"] = pd.to_numeric(df.get("fatalities"), errors="coerce").fillna(0)
     df["latitude"] = pd.to_numeric(df.get("latitude"), errors="coerce")
     df["longitude"] = pd.to_numeric(df.get("longitude"), errors="coerce")
 
-    # Fill missing values
-    for col in ["admin1", "admin2", "location", "event_type", "sub_event_type"]:
-        df[col] = safe_str_series(df, col)
+    df["admin1"] = safe_str_series(df, "admin1")
+    df["admin2"] = safe_str_series(df, "admin2")
+    df["location"] = safe_str_series(df, "location")
+    df["event_type"] = safe_str_series(df, "event_type")
+    df["sub_event_type"] = safe_str_series(df, "sub_event_type")
 
-    # Filter out rows with no date
     df = df[df["event_date"].notna()].copy()
-    
-    # Add derived columns using pandas datetime methods
     df["year"] = df["event_date"].dt.year
     df["month"] = df["event_date"].dt.month
     df["month_name"] = df["event_date"].dt.strftime("%B")
@@ -505,7 +317,8 @@ def build_bubble_map(df: pd.DataFrame, title: str):
 # RUN
 # =========================================================
 try:
-    raw_df = fetch_acled_all_somalia(ACLED_TOKEN)
+    with st.spinner("Loading ACLED Somalia data..."):
+        raw_df = fetch_acled_all_somalia(ACLED_TOKEN)
 
     if raw_df.empty:
         st.error("No data available. Please try again later.")
@@ -526,7 +339,7 @@ try:
             index=len(available_years) - 1,
         )
     else:
-        selected_year = 2023
+        selected_year = "All"
 
     month_options = ["All"] + [
         "January", "February", "March", "April", "May", "June",
@@ -534,83 +347,78 @@ try:
     ]
     selected_month = st.sidebar.selectbox("Month", options=month_options, index=0)
 
-    # Filter by year
-    if available_years:
+    if available_years and selected_year != "All":
         year_df = raw_df[raw_df["year"] == selected_year].copy()
     else:
         year_df = raw_df.copy()
-        selected_year = "All"
 
-    if not year_df.empty:
-        min_date = year_df["event_date"].min().date()
-        max_date = year_df["event_date"].max().date()
+    if year_df.empty:
+        st.warning("No data found for the selected year.")
+        st.stop()
 
-        date_range = st.sidebar.date_input(
-            "Date range",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-        )
+    min_date = year_df["event_date"].min().date()
+    max_date = year_df["event_date"].max().date()
 
-        if isinstance(date_range, tuple) and len(date_range) == 2:
-            start_date, end_date = date_range
-        else:
-            start_date, end_date = min_date, max_date
+    date_range = st.sidebar.date_input(
+        "Date range",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+    )
 
-        # Get unique event types and sub-event types
-        event_options = sorted(year_df["event_type"].dropna().astype(str).unique().tolist())
-        subevent_options = sorted(year_df["sub_event_type"].dropna().astype(str).unique().tolist())
-
-        selected_events = st.sidebar.multiselect(
-            "Event type",
-            options=event_options,
-            default=event_options,
-        )
-
-        selected_subevents = st.sidebar.multiselect(
-            "Sub-event type",
-            options=subevent_options,
-            default=subevent_options,
-        )
-
-        # Apply filters
-        filtered = year_df.copy()
-
-        if selected_month != "All":
-            filtered = filtered[filtered["month_name"] == selected_month].copy()
-
-        filtered = filtered[
-            (filtered["event_date"].dt.date >= start_date) &
-            (filtered["event_date"].dt.date <= end_date)
-        ].copy()
-
-        if selected_events:
-            filtered = filtered[filtered["event_type"].isin(selected_events)].copy()
-
-        if selected_subevents:
-            filtered = filtered[filtered["sub_event_type"].isin(selected_subevents)].copy()
-
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
     else:
-        filtered = pd.DataFrame()
-        selected_events = []
-        selected_subevents = []
+        start_date, end_date = min_date, max_date
 
-    # Create map title
+    event_options = sorted(year_df["event_type"].dropna().astype(str).unique().tolist())
+    subevent_options = sorted(year_df["sub_event_type"].dropna().astype(str).unique().tolist())
+
+    selected_events = st.sidebar.multiselect(
+        "Event type",
+        options=event_options,
+        default=event_options,
+    )
+
+    selected_subevents = st.sidebar.multiselect(
+        "Sub-event type",
+        options=subevent_options,
+        default=subevent_options,
+    )
+
+    filtered = year_df.copy()
+
+    if selected_month != "All":
+        filtered = filtered[filtered["month_name"] == selected_month].copy()
+
+    filtered = filtered[
+        (filtered["event_date"].dt.date >= start_date) &
+        (filtered["event_date"].dt.date <= end_date)
+    ].copy()
+
+    if selected_events:
+        filtered = filtered[filtered["event_type"].isin(selected_events)].copy()
+    else:
+        filtered = filtered.iloc[0:0].copy()
+
+    if selected_subevents:
+        filtered = filtered[filtered["sub_event_type"].isin(selected_subevents)].copy()
+    else:
+        filtered = filtered.iloc[0:0].copy()
+
     if selected_month == "All":
         map_title = f"ACLED Fatalities in Somalia ({selected_year})"
     else:
         map_title = f"ACLED Fatalities in Somalia ({selected_month} {selected_year})"
 
-    # Display map
     if filtered.empty:
-        st.info("📊 No events found for the selected filters. Try adjusting your filters.")
-    
+        st.info("No events found for the selected filters. Try adjusting your filters.")
+
     st.plotly_chart(
         build_bubble_map(filtered, map_title),
         use_container_width=True
     )
 
-    # Metrics
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("Selected Year", str(selected_year))
@@ -621,9 +429,8 @@ try:
     with c4:
         st.metric("Locations Mapped", f"{int(filtered['has_coords'].sum()):,}" if not filtered.empty else "0")
 
-    # Top locations
-    st.markdown("### 📍 Top Affected Locations")
-    if not filtered.empty and len(filtered) > 0:
+    st.markdown("### Top Affected Locations")
+    if not filtered.empty:
         top_locations = (
             filtered.groupby(["admin1", "admin2", "location"], as_index=False)["fatalities"]
             .sum()
@@ -643,15 +450,14 @@ try:
             hide_index=True,
         )
     else:
-        st.info("No locations to display")
+        st.info("No locations to display.")
 
-    # Data preview
-    st.markdown("### 👁️ Data Preview")
+    st.markdown("### Data Preview")
     preview_cols = [
         "event_date", "admin1", "admin2", "location",
         "event_type", "sub_event_type", "fatalities"
     ]
-    if not filtered.empty and len(filtered) > 0:
+    if not filtered.empty:
         st.dataframe(
             filtered[preview_cols].sort_values("event_date", ascending=False).head(100),
             use_container_width=True,
@@ -659,10 +465,7 @@ try:
         )
         st.caption(f"Showing first 100 of {len(filtered)} events")
     else:
-        st.info("No data to preview")
+        st.info("No data to preview.")
 
 except Exception as e:
     st.error(f"Error loading data: {e}")
-    with st.expander("Show detailed error"):
-        import traceback
-        st.code(traceback.format_exc())
