@@ -171,7 +171,7 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
     page = 1
 
 while True:
-      params = {
+   params = {
     "iso": COUNTRY,
     "limit": PAGE_LIMIT,
     "page": page,
