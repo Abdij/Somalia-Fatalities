@@ -112,7 +112,7 @@ st.markdown("""
 ACLED_TOKEN = st.secrets.get("ACLED_TOKEN", "")
 
 ACLED_BASE_URL = "https://acleddata.com/api/acled/read"
-COUNTRY = "Somalia"
+COUNTRY = 706
 PAGE_LIMIT = 5000
 
 ACLED_FIELDS = [
