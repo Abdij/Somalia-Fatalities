@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import plotly.express as px
@@ -24,7 +24,6 @@ st.markdown("""
         color: #1f2937;
         font-family: "Segoe UI", sans-serif;
     }
-
     .block-container {
         padding-top: 1.4rem;
         padding-bottom: 2rem;
@@ -32,20 +31,16 @@ st.markdown("""
         padding-right: 2rem;
         max-width: 1450px;
     }
-
     section[data-testid="stSidebar"] {
         background: #ffffff;
         border-right: 1px solid #e5e7eb;
     }
-
     section[data-testid="stSidebar"] .block-container {
         padding-top: 1rem;
     }
-
     h1, h2, h3 {
         color: #111827;
     }
-
     div[data-testid="metric-container"] {
         background: #ffffff;
         border: 1px solid #e5e7eb;
@@ -53,18 +48,15 @@ st.markdown("""
         border-radius: 16px;
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
     }
-
     div[data-testid="metric-container"] label {
         color: #6b7280 !important;
         font-size: 0.9rem !important;
         font-weight: 600 !important;
     }
-
     div[data-testid="metric-container"] div[data-testid="stMetricValue"] {
         color: #111827 !important;
         font-weight: 800 !important;
     }
-
     div[data-testid="stPlotlyChart"] {
         background: #ffffff;
         border-radius: 18px;
@@ -72,7 +64,6 @@ st.markdown("""
         border: 1px solid #e5e7eb;
         box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
     }
-
     div[data-testid="stDataFrame"] {
         background: #ffffff;
         border-radius: 16px;
@@ -80,7 +71,6 @@ st.markdown("""
         border: 1px solid #e5e7eb;
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
     }
-
     div[data-testid="stAlert"] {
         border-radius: 14px;
     }
@@ -112,6 +102,7 @@ st.markdown("""
 ACLED_TOKEN = st.secrets.get("ACLED_TOKEN", "")
 
 ACLED_BASE_URL = "https://acleddata.com/api/acled/read"
+COUNTRY_NAME = "Somalia"
 COUNTRY_ISO = 706
 PAGE_LIMIT = 5000
 MAX_PAGES = 20
@@ -120,7 +111,7 @@ ACLED_FIELDS = [
     "event_id_cnty",
     "event_date",
     "year",
-    "Country_ISO",
+    "country",
     "admin1",
     "admin2",
     "location",
@@ -156,61 +147,113 @@ def make_empty_map(title: str):
 # =========================================================
 # ACLED DOWNLOAD
 # =========================================================
-@st.cache_data(show_spinner=True, ttl=3600)
-def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
-    if not token:
-        raise ValueError("Missing ACLED token in Streamlit secrets.")
-
+def fetch_one_page(
+    token: str,
+    filter_params: Dict[str, Any],
+    page: int,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "User-Agent": "somalia-acled-bubble-map",
     }
 
-    rows: List[Dict[str, Any]] = []
-    page = 1
+    params = {
+        **filter_params,
+        "limit": PAGE_LIMIT,
+        "page": page,
+        "fields": "|".join(ACLED_FIELDS),
+        "_format": "json",
+    }
 
-    while page <= MAX_PAGES:
-        params = {
-            "country": COUNTRY_ISO,
-            "limit": PAGE_LIMIT,
-            "page": page,
-            "fields": "|".join(ACLED_FIELDS),
-            "_format": "json",
+    r = requests.get(
+        ACLED_BASE_URL,
+        headers=headers,
+        params=params,
+        timeout=30,
+    )
+
+    if r.status_code == 401:
+        raise ValueError("ACLED token expired or unauthorized. Update Streamlit secrets with a new token.")
+
+    r.raise_for_status()
+    payload = r.json()
+
+    if isinstance(payload, dict):
+        batch = payload.get("data", [])
+        meta = {
+            "status": payload.get("status"),
+            "success": payload.get("success"),
+            "count": payload.get("count"),
+            "total_count": payload.get("total_count"),
+            "messages": payload.get("messages"),
+            "url_filter": filter_params,
+        }
+    elif isinstance(payload, list):
+        batch = payload
+        meta = {
+            "status": 200,
+            "success": True,
+            "count": len(batch),
+            "total_count": len(batch),
+            "messages": [],
+            "url_filter": filter_params,
+        }
+    else:
+        batch = []
+        meta = {
+            "status": 200,
+            "success": True,
+            "count": 0,
+            "total_count": 0,
+            "messages": [],
+            "url_filter": filter_params,
         }
 
-        r = requests.get(
-            ACLED_BASE_URL,
-            headers=headers,
-            params=params,
-            timeout=30,
-        )
+    return batch, meta
 
-        if r.status_code == 401:
-            raise ValueError("ACLED token expired or unauthorized. Update Streamlit secrets with a new token.")
 
-        r.raise_for_status()
-        payload = r.json()
+@st.cache_data(show_spinner=True, ttl=3600)
+def fetch_acled_all_somalia(token: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    if not token:
+        raise ValueError("Missing ACLED token in Streamlit secrets.")
 
-        if isinstance(payload, dict):
-            batch = payload.get("data", [])
-        elif isinstance(payload, list):
-            batch = payload
-        else:
-            batch = []
+    debug: Dict[str, Any] = {"attempts": []}
 
-        if not batch:
-            break
+    def fetch_with_filter(filter_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        page = 1
 
-        rows.extend(batch)
+        while page <= MAX_PAGES:
+            batch, meta = fetch_one_page(token, filter_params, page)
 
-        if len(batch) < PAGE_LIMIT:
-            break
+            debug["attempts"].append({
+                "page": page,
+                "filter": filter_params,
+                "count": meta.get("count"),
+                "total_count": meta.get("total_count"),
+                "messages": meta.get("messages"),
+            })
 
-        page += 1
+            if not batch:
+                break
+
+            rows.extend(batch)
+
+            if len(batch) < PAGE_LIMIT:
+                break
+
+            page += 1
+
+        return rows
+
+    rows = fetch_with_filter({"country": COUNTRY_NAME})
+    if not rows:
+        rows = fetch_with_filter({"iso": COUNTRY_ISO})
 
     if not rows:
-        raise ValueError("ACLED request succeeded, but returned no Somalia rows.")
+        empty = pd.DataFrame(columns=ACLED_FIELDS)
+        return empty, debug
 
     df = pd.DataFrame(rows)
 
@@ -224,6 +267,7 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
     df["location"] = safe_str_series(df, "location")
     df["event_type"] = safe_str_series(df, "event_type")
     df["sub_event_type"] = safe_str_series(df, "sub_event_type")
+    df["country"] = safe_str_series(df, "country")
 
     df = df[df["event_date"].notna()].copy()
     df["year"] = df["event_date"].dt.year
@@ -231,7 +275,7 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
     df["month_name"] = df["event_date"].dt.strftime("%B")
     df["has_coords"] = df["latitude"].notna() & df["longitude"].notna()
 
-    return df
+    return df, debug
 
 
 # =========================================================
@@ -318,10 +362,15 @@ def build_bubble_map(df: pd.DataFrame, title: str):
 # =========================================================
 try:
     with st.spinner("Loading ACLED Somalia data..."):
-        raw_df = fetch_acled_all_somalia(ACLED_TOKEN)
+        raw_df, debug_info = fetch_acled_all_somalia(ACLED_TOKEN)
 
     if raw_df.empty:
-        st.error("No data available. Please try again later.")
+        st.error("ACLED request succeeded, but returned no Somalia rows.")
+        with st.expander("Debug details"):
+            st.write("Attempts:")
+            st.json(debug_info)
+            st.write("Token present:", bool(ACLED_TOKEN))
+            st.write("Endpoint:", ACLED_BASE_URL)
         st.stop()
 
     available_years = sorted(raw_df["year"].dropna().astype(int).unique().tolist())
@@ -332,14 +381,11 @@ try:
     </div>
     """, unsafe_allow_html=True)
 
-    if available_years:
-        selected_year = st.sidebar.selectbox(
-            "Year",
-            options=available_years,
-            index=len(available_years) - 1,
-        )
-    else:
-        selected_year = "All"
+    selected_year = st.sidebar.selectbox(
+        "Year",
+        options=available_years,
+        index=len(available_years) - 1,
+    )
 
     month_options = ["All"] + [
         "January", "February", "March", "April", "May", "June",
@@ -347,14 +393,7 @@ try:
     ]
     selected_month = st.sidebar.selectbox("Month", options=month_options, index=0)
 
-    if available_years and selected_year != "All":
-        year_df = raw_df[raw_df["year"] == selected_year].copy()
-    else:
-        year_df = raw_df.copy()
-
-    if year_df.empty:
-        st.warning("No data found for the selected year.")
-        st.stop()
+    year_df = raw_df[raw_df["year"] == selected_year].copy()
 
     min_date = year_df["event_date"].min().date()
     max_date = year_df["event_date"].max().date()
@@ -454,7 +493,7 @@ try:
 
     st.markdown("### Data Preview")
     preview_cols = [
-        "event_date", "admin1", "admin2", "location",
+        "event_date", "country", "admin1", "admin2", "location",
         "event_type", "sub_event_type", "fatalities"
     ]
     if not filtered.empty:
