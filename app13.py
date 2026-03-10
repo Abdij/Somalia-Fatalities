@@ -170,16 +170,16 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
     page = 1
 
-while True:
-   params = {
-    "iso": COUNTRY,
-    "limit": PAGE_LIMIT,
-    "page": page,
-    "fields": "|".join(ACLED_FIELDS),
-    "_format": "json",
-}
+    while True:
+        params = {
+            "iso": COUNTRY,
+            "limit": PAGE_LIMIT,
+            "page": page,
+            "fields": "|".join(ACLED_FIELDS),
+            "_format": "json",
+        }
 
-    r = requests.get(ACLED_BASE_URL, headers=headers, params=params, timeout=90)
+        r = requests.get(ACLED_BASE_URL, headers=headers, params=params, timeout=90)
 
         if r.status_code == 401:
             raise ValueError("ACLED token expired or unauthorized. Update Streamlit secrets with a new token.")
