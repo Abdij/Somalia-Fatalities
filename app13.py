@@ -120,7 +120,7 @@ ACLED_FIELDS = [
     "event_id_cnty",
     "event_date",
     "year",
-    "country",
+    "Country_ISO",
     "admin1",
     "admin2",
     "location",
@@ -172,7 +172,7 @@ def fetch_acled_all_somalia(token: str) -> pd.DataFrame:
 
     while page <= MAX_PAGES:
         params = {
-            "country": COUNTRY,
+            "country": COUNTRY_ISO,
             "limit": PAGE_LIMIT,
             "page": page,
             "fields": "|".join(ACLED_FIELDS),
