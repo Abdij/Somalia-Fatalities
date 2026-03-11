@@ -88,10 +88,10 @@ st.markdown("""
     margin-bottom: 18px;
 ">
     <div style="font-size: 2.2rem; font-weight: 800; color: #a61b1b; margin-bottom: 4px;">
-        Somalia ACLED Fatalities
+       Somalia Conflict Fatalities Dashboard- Data source: ACLED
     </div>
     <div style="font-size: 1rem; color: #4b5563;">
-        Interactive bubble map by location with year, month, date, event type, and sub-event type filters
+        Interactive geospatial dashboard tracking ACLED conflict events and fatalities across Somalia
     </div>
 </div>
 """, unsafe_allow_html=True)
