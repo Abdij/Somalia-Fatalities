@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
+import time
 
 import pandas as pd
 import plotly.express as px
@@ -99,9 +100,12 @@ st.markdown("""
 # =========================================================
 # CONFIG
 # =========================================================
-ACLED_TOKEN = st.secrets.get("ACLED_TOKEN", "")
+ACLED_USERNAME = st.secrets.get("ACLED_USERNAME", "")
+ACLED_PASSWORD = st.secrets.get("ACLED_PASSWORD", "")
 
+ACLED_OAUTH_URL = "https://acleddata.com/oauth/token"
 ACLED_BASE_URL = "https://acleddata.com/api/acled/read"
+
 COUNTRY_NAME = "Somalia"
 COUNTRY_ISO = 706
 PAGE_LIMIT = 5000
@@ -144,30 +148,78 @@ def make_empty_map(title: str):
     return fig
 
 
-def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
+# =========================================================
+# TOKEN MANAGEMENT
+# =========================================================
+def _request_new_token(username: str, password: str) -> dict:
+    r = requests.post(
+        ACLED_OAUTH_URL,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={
+            "username": username,
+            "password": password,
+            "grant_type": "password",
+            "client_id": "acled",
+        },
+        timeout=30,
+    )
+    r.raise_for_status()
+    data = r.json()
 
-    df = df.copy()
-    df["event_date"] = pd.to_datetime(df.get("event_date"), errors="coerce")
-    df["fatalities"] = pd.to_numeric(df.get("fatalities"), errors="coerce").fillna(0)
-    df["latitude"] = pd.to_numeric(df.get("latitude"), errors="coerce")
-    df["longitude"] = pd.to_numeric(df.get("longitude"), errors="coerce")
+    if "access_token" not in data:
+        raise ValueError(f"ACLED login succeeded but no access_token was returned: {data}")
 
-    df["country"] = safe_str_series(df, "country")
-    df["admin1"] = safe_str_series(df, "admin1")
-    df["admin2"] = safe_str_series(df, "admin2")
-    df["location"] = safe_str_series(df, "location")
-    df["event_type"] = safe_str_series(df, "event_type")
-    df["sub_event_type"] = safe_str_series(df, "sub_event_type")
+    return {
+        "access_token": data["access_token"],
+        "refresh_token": data.get("refresh_token", ""),
+        "expires_at": time.time() + int(data.get("expires_in", 86400)) - 300,
+    }
 
-    df = df[df["event_date"].notna()].copy()
-    df["year"] = df["event_date"].dt.year
-    df["month"] = df["event_date"].dt.month
-    df["month_name"] = df["event_date"].dt.strftime("%B")
-    df["has_coords"] = df["latitude"].notna() & df["longitude"].notna()
 
-    return df
+def _refresh_token(refresh_token: str) -> dict:
+    r = requests.post(
+        ACLED_OAUTH_URL,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+            "client_id": "acled",
+        },
+        timeout=30,
+    )
+    r.raise_for_status()
+    data = r.json()
+
+    if "access_token" not in data:
+        raise ValueError(f"ACLED refresh succeeded but no access_token was returned: {data}")
+
+    return {
+        "access_token": data["access_token"],
+        "refresh_token": data.get("refresh_token", refresh_token),
+        "expires_at": time.time() + int(data.get("expires_in", 86400)) - 300,
+    }
+
+
+def get_acled_access_token() -> str:
+    if not ACLED_USERNAME or not ACLED_PASSWORD:
+        raise ValueError("Missing ACLED_USERNAME or ACLED_PASSWORD in Streamlit secrets.")
+
+    auth = st.session_state.get("acled_auth")
+
+    if auth and time.time() < auth.get("expires_at", 0):
+        return auth["access_token"]
+
+    if auth and auth.get("refresh_token"):
+        try:
+            new_auth = _refresh_token(auth["refresh_token"])
+            st.session_state["acled_auth"] = new_auth
+            return new_auth["access_token"]
+        except Exception:
+            pass
+
+    new_auth = _request_new_token(ACLED_USERNAME, ACLED_PASSWORD)
+    st.session_state["acled_auth"] = new_auth
+    return new_auth["access_token"]
 
 
 # =========================================================
@@ -188,6 +240,7 @@ def fetch_one_page(
         **filter_params,
         "limit": PAGE_LIMIT,
         "page": page,
+        "fields": "|".join(ACLED_FIELDS),
         "_format": "json",
     }
 
@@ -199,7 +252,7 @@ def fetch_one_page(
     )
 
     if r.status_code == 401:
-        raise ValueError("ACLED token expired or unauthorized. Update Streamlit secrets with a new token.")
+        raise ValueError("ACLED token expired or unauthorized.")
 
     r.raise_for_status()
 
@@ -241,9 +294,6 @@ def fetch_one_page(
 
 @st.cache_data(show_spinner=True, ttl=3600)
 def fetch_acled_all_somalia(token: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-    if not token:
-        raise ValueError("Missing ACLED token in Streamlit secrets.")
-
     debug: Dict[str, Any] = {"attempts": []}
 
     def fetch_with_filter(filter_params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -266,14 +316,11 @@ def fetch_acled_all_somalia(token: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
 
         return rows
 
-    # Try exact country name
-    rows = fetch_with_filter({"country": "Somalia"})
+    rows = fetch_with_filter({"country": COUNTRY_NAME})
 
-    # Fallback to ISO
     if not rows:
-        rows = fetch_with_filter({"iso": 706})
+        rows = fetch_with_filter({"iso": COUNTRY_ISO})
 
-    # Final diagnostic: no filter at all
     if not rows:
         sample_rows = fetch_with_filter({})
         debug["diagnostic_unfiltered_rows"] = len(sample_rows)
@@ -395,6 +442,7 @@ def build_bubble_map(df: pd.DataFrame, title: str):
 # =========================================================
 try:
     with st.spinner("Loading ACLED Somalia data..."):
+        ACLED_TOKEN = get_acled_access_token()
         raw_df, debug_info = fetch_acled_all_somalia(ACLED_TOKEN)
 
     if raw_df.empty:
