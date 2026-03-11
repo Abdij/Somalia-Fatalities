@@ -13,7 +13,7 @@ import streamlit as st
 # PAGE
 # =========================================================
 st.set_page_config(
-    page_title="Somalia ACLED Fatalities",
+    page_title="Somalia Conflict Fatalities Dashboard- Data source: ACLED",
     layout="wide",
     initial_sidebar_state="expanded",
 )
