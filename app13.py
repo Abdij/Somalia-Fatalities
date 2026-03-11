@@ -173,6 +173,9 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
 # =========================================================
 # ACLED DOWNLOAD
 # =========================================================
+# =========================================================
+# ACLED DOWNLOAD
+# =========================================================
 def fetch_one_page(
     token: str,
     filter_params: Dict[str, Any],
@@ -188,10 +191,10 @@ def fetch_one_page(
         **filter_params,
         "limit": PAGE_LIMIT,
         "page": page,
-        "fields": "|".join(ACLED_FIELDS),
         "_format": "json",
     }
 
+    # Important: do NOT request fields in the diagnostic request yet
     r = requests.get(
         ACLED_BASE_URL,
         headers=headers,
@@ -203,46 +206,41 @@ def fetch_one_page(
         raise ValueError("ACLED token expired or unauthorized. Update Streamlit secrets with a new token.")
 
     r.raise_for_status()
-    payload = r.json()
+
+    content_type = r.headers.get("content-type", "")
+    raw_text = r.text[:1000]
+
+    try:
+        payload = r.json()
+    except Exception:
+        payload = None
+
+    meta = {
+        "http_status": r.status_code,
+        "content_type": content_type,
+        "raw_text_preview": raw_text,
+        "filter": filter_params,
+        "page": page,
+    }
 
     if isinstance(payload, dict):
+        meta["payload_keys"] = list(payload.keys())
         batch = payload.get("data", [])
-        meta = {
-            "status": payload.get("status"),
-            "success": payload.get("success"),
-            "count": payload.get("count"),
-            "total_count": payload.get("total_count"),
-            "messages": payload.get("messages"),
-            "data_query_restrictions": payload.get("data_query_restrictions"),
-            "filter": filter_params,
-            "page": page,
-        }
-    elif isinstance(payload, list):
-        batch = payload
-        meta = {
-            "status": 200,
-            "success": True,
-            "count": len(batch),
-            "total_count": len(batch),
-            "messages": [],
-            "data_query_restrictions": None,
-            "filter": filter_params,
-            "page": page,
-        }
-    else:
-        batch = []
-        meta = {
-            "status": 200,
-            "success": True,
-            "count": 0,
-            "total_count": 0,
-            "messages": [],
-            "data_query_restrictions": None,
-            "filter": filter_params,
-            "page": page,
-        }
+        meta["data_length"] = len(batch) if isinstance(batch, list) else None
+        meta["count"] = payload.get("count")
+        meta["total_count"] = payload.get("total_count")
+        meta["messages"] = payload.get("messages")
+        meta["data_query_restrictions"] = payload.get("data_query_restrictions")
+        return batch if isinstance(batch, list) else [], meta
 
-    return batch, meta
+    if isinstance(payload, list):
+        meta["payload_keys"] = "list"
+        meta["data_length"] = len(payload)
+        return payload, meta
+
+    meta["payload_keys"] = "not-json-dict-or-list"
+    meta["data_length"] = 0
+    return [], meta
 
 
 @st.cache_data(show_spinner=True, ttl=3600)
@@ -250,7 +248,7 @@ def fetch_acled_all_somalia(token: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     if not token:
         raise ValueError("Missing ACLED token in Streamlit secrets.")
 
-    debug: Dict[str, Any] = {"attempts": [], "diagnostic_sample_countries": []}
+    debug: Dict[str, Any] = {"attempts": []}
 
     def fetch_with_filter(filter_params: Dict[str, Any]) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
@@ -272,29 +270,49 @@ def fetch_acled_all_somalia(token: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
 
         return rows
 
-    rows = fetch_with_filter({"country": COUNTRY_NAME})
+    # Try exact country name
+    rows = fetch_with_filter({"country": "Somalia"})
 
+    # Fallback to ISO
     if not rows:
-        rows = fetch_with_filter({"iso": COUNTRY_ISO})
+        rows = fetch_with_filter({"iso": 706})
 
+    # Final diagnostic: no filter at all
     if not rows:
-        # Diagnostic: fetch unfiltered sample and inspect countries returned
-        sample_batch, sample_meta = fetch_one_page(token, {}, 1)
-        debug["diagnostic_sample_meta"] = sample_meta
+        sample_rows = fetch_with_filter({})
+        debug["diagnostic_unfiltered_rows"] = len(sample_rows)
 
-        if sample_batch:
-            sample_df = pd.DataFrame(sample_batch)
+        if sample_rows:
+            sample_df = pd.DataFrame(sample_rows)
             if "country" in sample_df.columns:
-                debug["diagnostic_sample_countries"] = (
-                    sample_df["country"].dropna().astype(str).unique().tolist()[:50]
+                debug["diagnostic_countries"] = (
+                    sample_df["country"].dropna().astype(str).unique().tolist()[:20]
                 )
 
         empty = pd.DataFrame(columns=ACLED_FIELDS)
         return empty, debug
 
-    df = normalize_df(pd.DataFrame(rows))
-    return df, debug
+    df = pd.DataFrame(rows)
 
+    df["event_date"] = pd.to_datetime(df.get("event_date"), errors="coerce")
+    df["fatalities"] = pd.to_numeric(df.get("fatalities"), errors="coerce").fillna(0)
+    df["latitude"] = pd.to_numeric(df.get("latitude"), errors="coerce")
+    df["longitude"] = pd.to_numeric(df.get("longitude"), errors="coerce")
+
+    df["country"] = safe_str_series(df, "country")
+    df["admin1"] = safe_str_series(df, "admin1")
+    df["admin2"] = safe_str_series(df, "admin2")
+    df["location"] = safe_str_series(df, "location")
+    df["event_type"] = safe_str_series(df, "event_type")
+    df["sub_event_type"] = safe_str_series(df, "sub_event_type")
+
+    df = df[df["event_date"].notna()].copy()
+    df["year"] = df["event_date"].dt.year
+    df["month"] = df["event_date"].dt.month
+    df["month_name"] = df["event_date"].dt.strftime("%B")
+    df["has_coords"] = df["latitude"].notna() & df["longitude"].notna()
+
+    return df, debug
 
 # =========================================================
 # MAP BUILDER
@@ -383,17 +401,10 @@ try:
         raw_df, debug_info = fetch_acled_all_somalia(ACLED_TOKEN)
 
     if raw_df.empty:
-        st.error("ACLED request succeeded, but returned no Somalia rows.")
-        with st.expander("Debug details"):
-            st.write("Token present:", bool(ACLED_TOKEN))
-            st.write("Endpoint:", ACLED_BASE_URL)
-            st.write("Attempts:")
-            st.json(debug_info.get("attempts", []))
-            st.write("Diagnostic sample countries:")
-            st.write(debug_info.get("diagnostic_sample_countries", []))
-            st.write("Diagnostic sample metadata:")
-            st.json(debug_info.get("diagnostic_sample_meta", {}))
-        st.stop()
+    st.error("ACLED request succeeded, but returned no Somalia rows.")
+    with st.expander("Debug details", expanded=True):
+        st.json(debug_info)
+    st.stop()
 
     available_years = sorted(raw_df["year"].dropna().astype(int).unique().tolist())
 
