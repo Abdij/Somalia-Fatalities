@@ -173,9 +173,6 @@ def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
 # =========================================================
 # ACLED DOWNLOAD
 # =========================================================
-# =========================================================
-# ACLED DOWNLOAD
-# =========================================================
 def fetch_one_page(
     token: str,
     filter_params: Dict[str, Any],
@@ -194,7 +191,6 @@ def fetch_one_page(
         "_format": "json",
     }
 
-    # Important: do NOT request fields in the diagnostic request yet
     r = requests.get(
         ACLED_BASE_URL,
         headers=headers,
@@ -314,6 +310,7 @@ def fetch_acled_all_somalia(token: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
 
     return df, debug
 
+
 # =========================================================
 # MAP BUILDER
 # =========================================================
@@ -401,10 +398,10 @@ try:
         raw_df, debug_info = fetch_acled_all_somalia(ACLED_TOKEN)
 
     if raw_df.empty:
-    st.error("ACLED request succeeded, but returned no Somalia rows.")
-    with st.expander("Debug details", expanded=True):
-        st.json(debug_info)
-    st.stop()
+        st.error("ACLED request succeeded, but returned no Somalia rows.")
+        with st.expander("Debug details", expanded=True):
+            st.json(debug_info)
+        st.stop()
 
     available_years = sorted(raw_df["year"].dropna().astype(int).unique().tolist())
 
